@@ -1,5 +1,7 @@
 gemini:
-  model: "gemini-2.5-pro"           # Gemini model to use
+  # model: "gemini-2.5-pro"             # Requires billing
+  # model: "gemini-2.0-flash"           # Requires billing
+  model: "gemini-2.5-flash"  # Free tier: 5 RPM, 20 RPD
   temperature: 1.0                   # Generation temperature
   max_output_tokens: 8192            # Max tokens in response
 
