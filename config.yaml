@@ -25,6 +25,7 @@ trading_bot:
     - ".toml"
     - ".txt"
     - ".md"
+    - ".log"
   # Directories to exclude when scanning bot code
   exclude_dirs:
     - "__pycache__"
