@@ -35,7 +35,7 @@ def _make_chat_config() -> types.GenerateContentConfig:
         tools=TOOLS,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(
             disable=False,
-            maximum_remote_calls=4,
+            maximum_remote_calls=5,
         ),
     )
 
@@ -65,15 +65,23 @@ class Agent:
         for attempt in range(max_retries):
             try:
                 response = self._chat.send_message(user_message)
-                return response.text or "(no response)"
+                text = response.text
+                # If the model hit the tool-call limit mid-chain, response.text is
+                # empty. Send a follow-up so it summarises with what it gathered.
+                if not text or not text.strip():
+                    logger.warning("Empty response (likely AFC limit hit), sending follow-up")
+                    follow_up = self._chat.send_message(
+                        "Based on the information you have gathered so far, "
+                        "please answer the original question."
+                    )
+                    text = follow_up.text
+                return text or "(no response)"
             except genai_errors.ClientError as exc:
                 if exc.status_code == 429:
-                    # Parse the suggested retry delay from the error message
                     delay = _parse_retry_delay(str(exc)) or (30 * (attempt + 1))
                     if attempt < max_retries - 1:
                         logger.warning("Rate limited (429), retrying in %.0fs...", delay)
                         time.sleep(delay)
-                        # Start a fresh chat to avoid replaying the failed turn
                         self._new_chat()
                         continue
                     return (
