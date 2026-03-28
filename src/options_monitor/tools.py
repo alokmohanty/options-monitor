@@ -29,12 +29,12 @@ def _safe_path(path: str) -> Path:
 # Tool functions
 # ---------------------------------------------------------------------------
 
-def read_log(last_n_lines: int = 200, search_keyword: str = "") -> str:
+def read_log(last_n_lines: int = 1000, search_keyword: str = "") -> str:
     """
     Read the trading bot log file.
 
     Args:
-        last_n_lines: Number of lines to read from the end of the log (default 200).
+        last_n_lines: Number of lines to read from the end of the log (default 1000, covers ~2 days).
         search_keyword: If provided, return only lines containing this keyword (case-insensitive).
 
     Returns:
