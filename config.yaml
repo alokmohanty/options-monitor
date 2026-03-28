@@ -1,0 +1,33 @@
+gemini:
+  model: "gemini-2.5-pro"           # Gemini model to use
+  temperature: 1.0                   # Generation temperature
+  max_output_tokens: 8192            # Max tokens in response
+
+discord:
+  command_prefix: "!"                # Prefix for bot commands
+  # bot_token is read from DISCORD_BOT_TOKEN env var
+  # allowed_channel_ids: []          # Optionally restrict to specific channel IDs (leave empty to allow all)
+  allowed_channel_ids:
+    - 1487531508800422119 
+
+trading_bot:
+  root_path: "/home/ubuntu/options-bot"
+  log_file: "/home/ubuntu/options-bot/logs/cron_output.log"
+  max_log_lines: 500                 # Max lines to read from log file at once
+  # File extensions to read when exploring bot code
+  code_extensions:
+    - ".py"
+    - ".yaml"
+    - ".yml"
+    - ".json"
+    - ".toml"
+    - ".txt"
+    - ".md"
+  # Directories to exclude when scanning bot code
+  exclude_dirs:
+    - "__pycache__"
+    - ".git"
+    - ".venv"
+    - "venv"
+    - "node_modules"
+    - ".pytest_cache"
