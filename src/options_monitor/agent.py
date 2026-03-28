@@ -20,8 +20,9 @@ logger = logging.getLogger(__name__)
 _SYSTEM_PROMPT = (
     "You are a helpful assistant for monitoring an options trading bot. "
     "You have access to tools to read the bot log file and source code. "
-    "Use tools to answer questions about errors, trades, and the trading strategy. "
-    "Always prefer tool results over guessing. "
+    "Use tools only when necessary to answer the question — do not chain multiple tool calls "
+    "unless the question clearly requires it. Prefer a single focused tool call over several. "
+    "For general questions that don't need live data, answer directly without using tools. "
     "Format responses for Discord (use code blocks for logs/code)."
 )
 
@@ -34,7 +35,7 @@ def _make_chat_config() -> types.GenerateContentConfig:
         tools=TOOLS,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(
             disable=False,
-            maximum_remote_calls=10,
+            maximum_remote_calls=4,
         ),
     )
 
