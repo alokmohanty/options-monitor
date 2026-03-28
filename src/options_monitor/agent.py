@@ -77,7 +77,12 @@ class Agent:
                     text = follow_up.text
                 return text or "(no response)"
             except genai_errors.ClientError as exc:
-                if exc.status_code == 429:
+                is_rate_limited = (
+                    "429" in str(exc)
+                    or getattr(exc, 'code', None) == 429
+                    or getattr(exc, 'status_code', None) == 429
+                )
+                if is_rate_limited:
                     delay = _parse_retry_delay(str(exc)) or (30 * (attempt + 1))
                     if attempt < max_retries - 1:
                         logger.warning("Rate limited (429), retrying in %.0fs...", delay)
