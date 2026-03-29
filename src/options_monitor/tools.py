@@ -5,6 +5,7 @@ Each function is exposed as a callable tool via the Gemini function-calling API.
 """
 
 import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -212,6 +213,33 @@ def search_in_bot_code(keyword: str, file_extension: str = ".py") -> str:
 # Process control tools
 # ---------------------------------------------------------------------------
 
+def _find_bot_pids() -> list[tuple[int, str]]:
+    """Return list of (pid, cmd_excerpt) for running trading bot processes.
+    Matches only processes whose command line contains both the bot root path
+    and 'src/main.py' — guaranteed not to match the options-monitor process.
+    """
+    root = str(Path(config.TradingBotConfig.root_path).resolve())
+    try:
+        result = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=10)
+    except Exception:
+        return []
+
+    # Match on the bot's own venv python — fully unique, never matches options-monitor
+    bot_python = str(Path(config.TradingBotConfig.root_path).resolve() / ".venv" / "bin" / "python")
+
+    found: list[tuple[int, str]] = []
+    for line in result.stdout.splitlines():
+        if bot_python in line and "src/main.py" in line and "grep" not in line:
+            parts = line.split()
+            try:
+                pid = int(parts[1])
+            except (IndexError, ValueError):
+                continue
+            cmd = " ".join(parts[10:])[:120] if len(parts) > 10 else line[:120]
+            found.append((pid, cmd))
+    return found
+
+
 def get_trading_bot_status() -> str:
     """
     Check whether the trading bot is currently running by inspecting the process list.
@@ -222,30 +250,9 @@ def get_trading_bot_status() -> str:
     Returns:
         A status message with PID(s) if running, or confirmation it is stopped.
     """
-    root = str(Path(config.TradingBotConfig.root_path).resolve())
-
-    try:
-        result = subprocess.run(
-            ["ps", "aux"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except Exception as e:
-        return f"❌ Could not read process list: {e}"
-
-    matches: list[str] = []
-    for line in result.stdout.splitlines():
-        # Match lines that reference the bot root and src/main.py
-        if root in line and "src/main.py" in line and "grep" not in line:
-            parts = line.split()
-            pid = parts[1] if len(parts) > 1 else "?"
-            # Trim the command to keep it readable
-            cmd = " ".join(parts[10:])[:120] if len(parts) > 10 else line[:120]
-            matches.append(f"PID `{pid}` — `{cmd}`")
-
+    matches = _find_bot_pids()
     if matches:
-        lines = "\n".join(f"• {m}" for m in matches)
+        lines = "\n".join(f"• PID `{pid}` — `{cmd}`" for pid, cmd in matches)
         return f"✅ Trading bot is **running** ({len(matches)} process{'es' if len(matches) > 1 else ''}):\n{lines}"
     else:
         return "🔴 Trading bot is **not running** — no matching processes found."
@@ -253,45 +260,38 @@ def get_trading_bot_status() -> str:
 
 def kill_trading_bot() -> str:
     """
-    Kill all running trading bot processes by executing the kill script.
+    Kill all running trading bot processes.
 
-    This runs scripts/kill_options_processes.py inside the bot virtualenv,
-    the same script used by the daily cron job at 10:30 IST.
+    Finds processes by matching the bot root path + 'src/main.py' in their
+    command line — surgical targeting that will never affect the options-monitor
+    service or any other process.
 
     Returns:
-        Output from the kill script, or an error message.
+        Summary of killed PIDs, or a message if nothing was running.
     """
-    root = Path(config.TradingBotConfig.root_path)
-    python = root / ".venv" / "bin" / "python"
-    kill_script = root / "scripts" / "kill_options_processes.py"
-    kill_log = root / "logs" / "kill_options.log"
+    pids = _find_bot_pids()
+    if not pids:
+        return "ℹ️ No trading bot processes found — nothing to kill."
 
-    if not kill_script.exists():
-        return f"Kill script not found at {kill_script}"
+    killed: list[str] = []
+    errors: list[str] = []
+    for pid, cmd in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed.append(f"PID `{pid}`")
+        except ProcessLookupError:
+            errors.append(f"PID `{pid}` — already gone")
+        except PermissionError:
+            errors.append(f"PID `{pid}` — permission denied")
+        except Exception as e:
+            errors.append(f"PID `{pid}` — {e}")
 
-    try:
-        kill_log.parent.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
-            [str(python), str(kill_script)],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        output = (result.stdout + result.stderr).strip()
-        # Append to kill log
-        with open(kill_log, "a") as f:
-            from datetime import datetime
-            f.write(f"\n[options-monitor kill at {datetime.now().isoformat()}]\n")
-            f.write(output + "\n")
-        if result.returncode == 0:
-            return f"✅ Kill script completed.\n{output}" if output else "✅ Kill script completed — no output."
-        else:
-            return f"⚠️ Kill script exited with code {result.returncode}.\n{output}"
-    except subprocess.TimeoutExpired:
-        return "❌ Kill script timed out after 30 seconds."
-    except Exception as e:
-        return f"❌ Error running kill script: {e}"
+    lines: list[str] = []
+    if killed:
+        lines.append(f"✅ Sent SIGTERM to {len(killed)} process{'es' if len(killed) > 1 else ''}: {', '.join(killed)}")
+    if errors:
+        lines.append("⚠️ " + "; ".join(errors))
+    return "\n".join(lines)
 
 
 def restart_trading_bot() -> str:
@@ -319,9 +319,9 @@ def restart_trading_bot() -> str:
     # Step 1: kill existing processes
     kill_result = kill_trading_bot()
 
-    # Step 2: wait briefly then start fresh
+    # Step 2: wait briefly for processes to exit cleanly
     import time
-    time.sleep(2)
+    time.sleep(3)
 
     try:
         log_file.parent.mkdir(parents=True, exist_ok=True)
