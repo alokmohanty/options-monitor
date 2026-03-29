@@ -5,6 +5,7 @@ Each function is exposed as a callable tool via the Gemini function-calling API.
 """
 
 import os
+import subprocess
 from pathlib import Path
 
 from options_monitor import config
@@ -208,6 +209,105 @@ def search_in_bot_code(keyword: str, file_extension: str = ".py") -> str:
 
 
 # ---------------------------------------------------------------------------
+# Process control tools
+# ---------------------------------------------------------------------------
+
+def kill_trading_bot() -> str:
+    """
+    Kill all running trading bot processes by executing the kill script.
+
+    This runs scripts/kill_options_processes.py inside the bot virtualenv,
+    the same script used by the daily cron job at 10:30 IST.
+
+    Returns:
+        Output from the kill script, or an error message.
+    """
+    root = Path(config.TradingBotConfig.root_path)
+    python = root / ".venv" / "bin" / "python"
+    kill_script = root / "scripts" / "kill_options_processes.py"
+    kill_log = root / "logs" / "kill_options.log"
+
+    if not kill_script.exists():
+        return f"Kill script not found at {kill_script}"
+
+    try:
+        kill_log.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            [str(python), str(kill_script)],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        output = (result.stdout + result.stderr).strip()
+        # Append to kill log
+        with open(kill_log, "a") as f:
+            from datetime import datetime
+            f.write(f"\n[options-monitor kill at {datetime.now().isoformat()}]\n")
+            f.write(output + "\n")
+        if result.returncode == 0:
+            return f"✅ Kill script completed.\n{output}" if output else "✅ Kill script completed — no output."
+        else:
+            return f"⚠️ Kill script exited with code {result.returncode}.\n{output}"
+    except subprocess.TimeoutExpired:
+        return "❌ Kill script timed out after 30 seconds."
+    except Exception as e:
+        return f"❌ Error running kill script: {e}"
+
+
+def restart_trading_bot() -> str:
+    """
+    Kill existing trading bot processes and start fresh with nohup (detached).
+
+    This mirrors what the cron job does:
+    1. Runs kill_options_processes.py to stop any running instances.
+    2. Starts src/main.py detached via a new session (nohup-equivalent),
+       appending stdout/stderr to logs/cron_output.log.
+
+    Returns:
+        Status message including the new process PID, or an error message.
+    """
+    root = Path(config.TradingBotConfig.root_path)
+    python = root / ".venv" / "bin" / "python"
+    main_script = root / "src" / "main.py"
+    log_file = Path(config.TradingBotConfig.log_file)
+
+    if not main_script.exists():
+        return f"Main script not found at {main_script}"
+    if not python.exists():
+        return f"Python not found at {python}"
+
+    # Step 1: kill existing processes
+    kill_result = kill_trading_bot()
+
+    # Step 2: wait briefly then start fresh
+    import time
+    time.sleep(2)
+
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_handle = open(log_file, "a")
+        proc = subprocess.Popen(
+            [str(python), str(main_script)],
+            cwd=str(root),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,  # detach — survives options-monitor restarts
+        )
+        from datetime import datetime
+        with open(log_file, "a") as f:
+            f.write(f"\n[options-monitor restart at {datetime.now().isoformat()} — PID {proc.pid}]\n")
+        return (
+            f"✅ Trading bot restarted.\n"
+            f"• Kill step: {kill_result.splitlines()[0]}\n"
+            f"• New PID: `{proc.pid}`\n"
+            f"• Log: `{log_file}`"
+        )
+    except Exception as e:
+        return f"❌ Error starting trading bot: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Tool registry used by the agent
 # ---------------------------------------------------------------------------
 
@@ -217,6 +317,8 @@ TOOLS = [
     list_bot_files,
     read_bot_file,
     search_in_bot_code,
+    kill_trading_bot,
+    restart_trading_bot,
 ]
 
 TOOL_MAP: dict[str, callable] = {fn.__name__: fn for fn in TOOLS}

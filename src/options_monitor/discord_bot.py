@@ -16,6 +16,7 @@ from discord.ext import commands
 from options_monitor import config, counter
 from options_monitor.agent import Agent
 from options_monitor.scheduler import start_scheduler
+from options_monitor.tools import kill_trading_bot, restart_trading_bot
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,9 @@ _TAG_HINTS: dict[str, str] = {
     "code":    "Read the trading bot source code to answer this: ",
     "config":  "Read the trading bot config files to answer this: ",
 }
+
+# Hashtags that trigger direct process-control actions (bypass the agent)
+_ACTION_TAGS = {"kill", "restart"}
 
 
 def _apply_tag_hints(text: str) -> str:
@@ -46,6 +50,14 @@ def _apply_tag_hints(text: str) -> str:
             question = hint + question
             break  # use the first recognised tag only
     return question or text
+
+
+def _detect_action_tag(text: str) -> str | None:
+    """Return the first action tag found (#kill / #restart), or None."""
+    for tag in re.findall(r"#(\w+)", text):
+        if tag.lower() in _ACTION_TAGS:
+            return tag.lower()
+    return None
 
 
 def _split_message(text: str) -> list[str]:
@@ -100,9 +112,15 @@ class MonitorBot(commands.Bot):
         # treat it as a question to the agent
         prefix = config.DiscordConfig.command_prefix
         if not message.content.startswith(prefix):
-            question = _apply_tag_hints(message.content)
-            ctx = await self.get_context(message)
-            await self._handle_question(ctx, question)
+            # Check for action tags first (#kill / #restart)
+            action = _detect_action_tag(message.content)
+            if action:
+                ctx = await self.get_context(message)
+                await self._run_action(ctx, action)
+            else:
+                question = _apply_tag_hints(message.content)
+                ctx = await self.get_context(message)
+                await self._handle_question(ctx, question)
 
     # ------------------------------------------------------------------
     # Commands
@@ -164,6 +182,8 @@ class MonitorBot(commands.Bot):
                     f"`{prefix}errors` — summarise recent errors\n"
                     f"`{prefix}trades` — summarise recent trades\n"
                     f"`{prefix}strategy` — explain trading strategy\n"
+                    f"`{prefix}kill` — kill the trading bot\n"
+                    f"`{prefix}restart` — kill & restart the trading bot\n"
                     f"`{prefix}help` — show this message"
                 ),
                 inline=False,
@@ -205,6 +225,38 @@ class MonitorBot(commands.Bot):
                 ctx,
                 "Read the trading bot source code and explain the trading strategy in detail.",
             )
+
+        @self.command(name="kill")
+        async def kill_cmd(ctx: commands.Context) -> None:
+            """Kill all running trading bot processes.
+            Usage: !kill
+            """
+            await self._run_action(ctx, "kill")
+
+        @self.command(name="restart")
+        async def restart_cmd(ctx: commands.Context) -> None:
+            """Kill and restart the trading bot with nohup.
+            Usage: !restart
+            """
+            await self._run_action(ctx, "restart")
+
+    # ------------------------------------------------------------------
+    # Process-control dispatcher (kill / restart — no agent involvement)
+    # ------------------------------------------------------------------
+
+    async def _run_action(self, ctx: commands.Context, action: str) -> None:
+        async with ctx.typing():
+            loop = asyncio.get_event_loop()
+            if action == "kill":
+                await ctx.send("⏳ Killing trading bot processes...")
+                result = await loop.run_in_executor(None, kill_trading_bot)
+            elif action == "restart":
+                await ctx.send("⏳ Restarting trading bot...")
+                result = await loop.run_in_executor(None, restart_trading_bot)
+            else:
+                result = f"Unknown action: {action}"
+        foot = counter.footer()
+        await ctx.send(f"{result}\n{foot}")
 
     # ------------------------------------------------------------------
     # Core dispatcher
