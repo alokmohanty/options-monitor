@@ -15,7 +15,8 @@ Two jobs run as asyncio background tasks:
 
 import asyncio
 import logging
-from datetime import datetime, time as dtime
+import re
+from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -24,6 +25,7 @@ from google import genai
 from google.genai import types
 
 from options_monitor import config
+from options_monitor import counter
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +34,8 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------
 
 _PERIODIC_PROMPT = """\
-You are monitoring a live options trading bot. Below are the last {n} lines of its log \
-from {timestamp} IST.
+You are monitoring a live options trading bot. Below are log lines from the last \
+{n} minutes (captured at {timestamp} IST).
 
 --- LOG START ---
 {log_content}
@@ -42,7 +44,10 @@ from {timestamp} IST.
 Instructions:
 - Scan for errors, exceptions, warnings, failed orders, or any unusual activity.
 - If everything looks normal, respond with exactly: OK
-- Otherwise provide a short bullet-point summary of issues found (max 10 lines).
+- Otherwise list each issue as a bullet point in this format:
+  • <short description> — `<exact log line>`
+- Include the exact log line (or relevant excerpt) as reference for each issue.
+- Max 10 bullet points. Do NOT repeat issues from older entries.
 - Do NOT explain what you are doing, just give the result.
 """
 
@@ -77,19 +82,73 @@ def _parse_hhmm(s: str) -> dtime:
 
 
 def _is_trading_hours() -> bool:
-    now = _now_ist().time()
+    now_dt = _now_ist()
+    if now_dt.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        return False
+    now = now_dt.time()
     start = _parse_hhmm(config.MonitorConfig.trading_start)
     end = _parse_hhmm(config.MonitorConfig.trading_end)
     return start <= now <= end
 
 
+# Patterns to match common log timestamp formats, e.g.:
+#   2026-03-29 13:51:00  or  2026-03-29T13:51:00  or  [2026-03-29 13:51:00]
+_TS_PATTERN = re.compile(
+    r"(?:^|\[)(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})"
+)
+
+
+def _parse_line_ts(line: str) -> datetime | None:
+    """Try to parse a timestamp from a log line. Returns None if not found."""
+    m = _TS_PATTERN.search(line)
+    if not m:
+        return None
+    try:
+        naive = datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M:%S")
+        return naive.replace(tzinfo=ZoneInfo(config.MonitorConfig.timezone))
+    except ValueError:
+        return None
+
+
 def _read_log_lines(n: int) -> str:
+    """Read last n lines (used for EOD summary)."""
     log_path = Path(config.TradingBotConfig.log_file)
     if not log_path.exists():
         return f"(log file not found at {log_path})"
     with open(log_path, "r", errors="replace") as f:
         lines = f.readlines()
     return "".join(lines[-n:]) or "(log file is empty)"
+
+
+def _read_log_since(minutes: int) -> str:
+    """Return log lines whose timestamp falls within the last `minutes` minutes.
+    Falls back to last 200 lines if no timestamps can be parsed."""
+    log_path = Path(config.TradingBotConfig.log_file)
+    if not log_path.exists():
+        return f"(log file not found at {log_path})"
+    with open(log_path, "r", errors="replace") as f:
+        all_lines = f.readlines()
+
+    cutoff = _now_ist() - timedelta(minutes=minutes)
+
+    # Walk backward from the end — collect lines within the window
+    recent: list[str] = []
+    last_ts: datetime | None = None
+    for line in reversed(all_lines):
+        ts = _parse_line_ts(line)
+        if ts is not None:
+            last_ts = ts
+        # Use the most recently seen timestamp for this line
+        if last_ts is not None and last_ts < cutoff:
+            break  # older than our window, stop
+        recent.append(line)
+
+    if not recent:
+        # No timestamps found — fall back to last 200 lines
+        return "".join(all_lines[-200:]) or "(log file is empty)"
+
+    recent.reverse()
+    return "".join(recent)
 
 
 def _gemini_one_shot(prompt: str) -> str:
@@ -121,12 +180,12 @@ async def _periodic_check_job(channel: discord.TextChannel) -> None:
             continue
 
         try:
-            n = config.MonitorConfig.check_log_lines
-            log_content = _read_log_lines(n)
+            minutes = config.MonitorConfig.check_interval_minutes
+            log_content = _read_log_since(minutes)
             now_str = _now_ist().strftime("%Y-%m-%d %H:%M")
 
             prompt = _PERIODIC_PROMPT.format(
-                n=n, timestamp=now_str, log_content=log_content
+                n=minutes, timestamp=now_str, log_content=log_content
             )
 
             loop = asyncio.get_event_loop()
@@ -137,10 +196,11 @@ async def _periodic_check_job(channel: discord.TextChannel) -> None:
 
             if not is_ok or config.MonitorConfig.alert_on_ok:
                 header = f"📊 **Bot Monitor** `{now_str} IST`"
+                foot = counter.footer()
                 if is_ok:
-                    await channel.send(f"{header}\n✅ Everything looks normal.")
+                    await channel.send(f"{header}\n✅ Everything looks normal.\n{foot}")
                 else:
-                    await channel.send(f"{header}\n⚠️ Issues detected:\n{result}")
+                    await channel.send(f"{header}\n⚠️ Issues detected:\n{result}\n{foot}")
 
         except Exception as exc:
             logger.exception("Error in periodic check job: %s", exc)
@@ -158,7 +218,6 @@ async def _eod_summary_job(channel: discord.TextChannel) -> None:
         )
         if now.time() >= eod_time:
             # Already past today's EOD time — wait until tomorrow
-            from datetime import timedelta
             target = target + timedelta(days=1)
 
         wait_seconds = (target - now).total_seconds()
@@ -166,6 +225,11 @@ async def _eod_summary_job(channel: discord.TextChannel) -> None:
         await asyncio.sleep(wait_seconds)
 
         try:
+            # Skip weekends
+            if _now_ist().weekday() >= 5:
+                logger.info("EOD summary skipped — weekend")
+                continue
+
             n = config.MonitorConfig.eod_log_lines
             log_content = _read_log_lines(n)
             today_str = _now_ist().strftime("%d %B %Y")
@@ -177,7 +241,8 @@ async def _eod_summary_job(channel: discord.TextChannel) -> None:
 
             logger.info("EOD summary generated for %s", today_str)
             header = f"📋 **End-of-Day Summary** — {today_str}"
-            await channel.send(f"{header}\n{result}")
+            foot = counter.footer()
+            await channel.send(f"{header}\n{result}\n{foot}")
 
         except Exception as exc:
             logger.exception("Error in EOD summary job: %s", exc)
