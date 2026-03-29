@@ -212,6 +212,45 @@ def search_in_bot_code(keyword: str, file_extension: str = ".py") -> str:
 # Process control tools
 # ---------------------------------------------------------------------------
 
+def get_trading_bot_status() -> str:
+    """
+    Check whether the trading bot is currently running by inspecting the process list.
+
+    Looks for Python processes whose command line includes the bot's main script
+    (src/main.py) running from the bot root directory.
+
+    Returns:
+        A status message with PID(s) if running, or confirmation it is stopped.
+    """
+    root = str(Path(config.TradingBotConfig.root_path).resolve())
+
+    try:
+        result = subprocess.run(
+            ["ps", "aux"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception as e:
+        return f"❌ Could not read process list: {e}"
+
+    matches: list[str] = []
+    for line in result.stdout.splitlines():
+        # Match lines that reference the bot root and src/main.py
+        if root in line and "src/main.py" in line and "grep" not in line:
+            parts = line.split()
+            pid = parts[1] if len(parts) > 1 else "?"
+            # Trim the command to keep it readable
+            cmd = " ".join(parts[10:])[:120] if len(parts) > 10 else line[:120]
+            matches.append(f"PID `{pid}` — `{cmd}`")
+
+    if matches:
+        lines = "\n".join(f"• {m}" for m in matches)
+        return f"✅ Trading bot is **running** ({len(matches)} process{'es' if len(matches) > 1 else ''}):\n{lines}"
+    else:
+        return "🔴 Trading bot is **not running** — no matching processes found."
+
+
 def kill_trading_bot() -> str:
     """
     Kill all running trading bot processes by executing the kill script.
@@ -317,6 +356,7 @@ TOOLS = [
     list_bot_files,
     read_bot_file,
     search_in_bot_code,
+    get_trading_bot_status,
     kill_trading_bot,
     restart_trading_bot,
 ]

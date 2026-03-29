@@ -16,7 +16,7 @@ from discord.ext import commands
 from options_monitor import config, counter
 from options_monitor.agent import Agent
 from options_monitor.scheduler import start_scheduler
-from options_monitor.tools import kill_trading_bot, restart_trading_bot
+from options_monitor.tools import kill_trading_bot, restart_trading_bot, get_trading_bot_status
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ _TAG_HINTS: dict[str, str] = {
 }
 
 # Hashtags that trigger direct process-control actions (bypass the agent)
-_ACTION_TAGS = {"kill", "restart"}
+_ACTION_TAGS = {"kill", "restart", "status"}
 
 
 def _apply_tag_hints(text: str) -> str:
@@ -184,6 +184,7 @@ class MonitorBot(commands.Bot):
                     f"`{prefix}strategy` — explain trading strategy\n"
                     f"`{prefix}kill` — kill the trading bot\n"
                     f"`{prefix}restart` — kill & restart the trading bot\n"
+                    f"`{prefix}status` — check if trading bot is running\n"
                     f"`{prefix}help` — show this message"
                 ),
                 inline=False,
@@ -240,6 +241,13 @@ class MonitorBot(commands.Bot):
             """
             await self._run_action(ctx, "restart")
 
+        @self.command(name="status")
+        async def status_cmd(ctx: commands.Context) -> None:
+            """Check if the trading bot process is running.
+            Usage: !status
+            """
+            await self._run_action(ctx, "status")
+
     # ------------------------------------------------------------------
     # Process-control dispatcher (kill / restart — no agent involvement)
     # ------------------------------------------------------------------
@@ -253,6 +261,8 @@ class MonitorBot(commands.Bot):
             elif action == "restart":
                 await ctx.send("⏳ Restarting trading bot...")
                 result = await loop.run_in_executor(None, restart_trading_bot)
+            elif action == "status":
+                result = await loop.run_in_executor(None, get_trading_bot_status)
             else:
                 result = f"Unknown action: {action}"
         foot = counter.footer()
