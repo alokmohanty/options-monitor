@@ -139,4 +139,4 @@ def stats() -> tuple[int, int]:
 def footer() -> str:
     """Short footer string to append to Discord messages."""
     today, month = stats()
-    return f"-# 🌐 Model calls: `{today}` today | `{month}` this month"
+    return f"-# Model calls: `{today}` today | `{month}` this month"
