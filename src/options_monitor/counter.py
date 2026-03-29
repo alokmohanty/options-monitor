@@ -21,7 +21,7 @@ _lock = threading.Lock()
 _hooked: bool = False
 
 # Persist to data/counter.json (relative to project root)
-_DATA_FILE = Path(__file__).resolve().parents[3] / "data" / "counter.json"
+_DATA_FILE = Path(__file__).resolve().parents[2] / "data" / "counter.json"
 
 
 def _ist_now() -> datetime:

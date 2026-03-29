@@ -213,6 +213,93 @@ def search_in_bot_code(keyword: str, file_extension: str = ".py") -> str:
 # Process control tools
 # ---------------------------------------------------------------------------
 
+# Journal: single JSON file, all dates, at data/journal.json inside project root
+_JOURNAL_FILE = Path(__file__).resolve().parents[2] / "data" / "journal.json"
+
+
+def save_journal_entry(date_str: str, entry: dict) -> None:
+    """
+    Persist a structured EOD journal entry for `date_str` (YYYY-MM-DD).
+    Merges into the single data/journal.json file — one key per trading day.
+    Called by the scheduler after generating the EOD report.
+    """
+    import json as _json
+    import logging
+    _log = logging.getLogger(__name__)
+    try:
+        _JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+        data: dict = {}
+        if _JOURNAL_FILE.exists():
+            try:
+                data = _json.loads(_JOURNAL_FILE.read_text())
+            except Exception:
+                data = {}
+        data[date_str] = entry
+        _JOURNAL_FILE.write_text(_json.dumps(data, indent=2, ensure_ascii=False))
+    except Exception as e:
+        _log.warning("Failed to save journal entry: %s", e)
+
+
+def read_journal(query: str = "") -> str:
+    """
+    Read the trading journal for alokrm. All entries are in a single JSON file.
+
+    Args:
+        query: How to query the journal:
+          - Leave empty or 'latest'     → most recent entry
+          - 'list'                       → list all available dates
+          - 'all'                        → full journal as JSON (for aggregate analysis)
+          - 'YYYY-MM-DD'                 → single date entry
+          - 'YYYY-MM-DD:YYYY-MM-DD'      → date range (e.g. '2026-02-01:2026-02-28')
+
+    Returns:
+        JSON string with the requested entries, or an informative message.
+    """
+    import json as _json
+
+    if not _JOURNAL_FILE.exists():
+        return "📓 No journal entries yet — first entry saved after market close."
+
+    try:
+        data: dict = _json.loads(_JOURNAL_FILE.read_text())
+    except Exception as e:
+        return f"❌ Could not read journal: {e}"
+
+    if not data:
+        return "📓 Journal is empty."
+
+    q = query.strip().lower()
+
+    if not q or q == "latest":
+        latest_date = sorted(data.keys())[-1]
+        return f"*(Most recent: `{latest_date}`)*\n\n```json\n{_json.dumps({latest_date: data[latest_date]}, indent=2)}\n```"
+
+    if q == "list":
+        dates = sorted(data.keys(), reverse=True)
+        return "📓 **Available journal entries:**\n" + "\n".join(f"• `{d}`" for d in dates)
+
+    if q == "all":
+        return f"```json\n{_json.dumps(data, indent=2)}\n```"
+
+    if ":" in query.strip():
+        # Date range
+        parts = query.strip().split(":")
+        if len(parts) == 2:
+            start, end = parts[0].strip(), parts[1].strip()
+            subset = {d: v for d, v in data.items() if start <= d <= end}
+            if not subset:
+                return f"❌ No journal entries between `{start}` and `{end}`."
+            return f"```json\n{_json.dumps(subset, indent=2)}\n```"
+
+    # Single date
+    date_key = query.strip()
+    if date_key in data:
+        return f"```json\n{_json.dumps({date_key: data[date_key]}, indent=2)}\n```"
+
+    available = ", ".join(sorted(data.keys())[-5:])
+    return f"❌ No journal entry for `{date_key}`. Most recent: {available}"
+
+
 def _find_bot_pids() -> list[tuple[int, str]]:
     """Return list of (pid, cmd_excerpt) for running trading bot processes.
     Matches only processes whose command line contains both the bot root path
@@ -356,6 +443,7 @@ TOOLS = [
     list_bot_files,
     read_bot_file,
     search_in_bot_code,
+    read_journal,
     get_trading_bot_status,
     kill_trading_bot,
     restart_trading_bot,

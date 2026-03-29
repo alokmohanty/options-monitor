@@ -14,6 +14,7 @@ Two jobs run as asyncio background tasks:
 """
 
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime, time as dtime, timedelta
@@ -26,6 +27,7 @@ from google.genai import types
 
 from options_monitor import config
 from options_monitor import counter
+from options_monitor.tools import save_journal_entry
 
 logger = logging.getLogger(__name__)
 
@@ -52,19 +54,37 @@ Instructions:
 """
 
 _EOD_PROMPT = """\
-You are analysing the end-of-day log of an options trading bot for {date} IST.
+You are analysing the end-of-day log of an options trading bot for {date} (IST).
+Extract data ONLY for user: alokrm.
 
 --- LOG START ---
 {log_content}
 --- LOG END ---
 
-Provide an end-of-day summary with the following sections:
-1. **Orders Summary**: Number of orders placed per user (buy/sell breakdown if visible).
-2. **P&L Summary**: P&L per user if available in the log, otherwise state "not available in logs".
-3. **Issues & Errors**: List any errors, exceptions, failed orders, or warnings encountered.
-4. **Overall Status**: One-line verdict (e.g. "Smooth day", "Minor issues", "Critical errors").
+Return a SINGLE valid JSON object (no markdown fences, no extra text) with exactly this schema:
+{{
+  "date": "{date_key}",
+  "overview": "<one paragraph summary of the day for alokrm>",
+  "overall_status": "smooth" | "minor_issues" | "critical_errors",
+  "profitable": true | false,
+  "total_pnl": <float or null if not in log>,
+  "total_trades": <int>,
+  "trades": [
+    {{
+      "instrument": "<e.g. NIFTY 24000 CE>",
+      "type": "call" | "put",
+      "strategy": "inner_band" | "inner_band_reversal" | "outer_band" | "unknown",
+      "exit_reason": "sl_hit" | "target_hit" | "protection_50pct" | "protection_70pct" | "eod_exit" | "unknown",
+      "pnl": <float or null>
+    }}
+  ],
+  "issues": ["<issue 1>", "<issue 2>"]
+}}
 
-Be concise. Use Discord markdown formatting.
+Rules:
+- Only include trades belonging to alokrm.
+- If a field is not present in the logs, use null or empty list.
+- Do not include any text outside the JSON object.
 """
 
 
@@ -164,6 +184,41 @@ def _gemini_one_shot(prompt: str) -> str:
     )
     return response.text or "(no response)"
 
+def _format_eod_discord(entry: dict, today_str: str) -> str:
+    """Format a structured journal entry dict into a Discord message."""
+    status_emoji = {"smooth": "✅", "minor_issues": "⚠️", "critical_errors": "🚨"}.get(
+        entry.get("overall_status", ""), "📊"
+    )
+    pnl = entry.get("total_pnl")
+    pnl_str = f"**P&L:** `{'+ ' if pnl and pnl > 0 else ''}{pnl}`" if pnl is not None else "**P&L:** not available"
+    profitable = entry.get("profitable")
+    profit_str = ("⬆️ Profitable" if profitable else "⬇️ Loss") if profitable is not None else ""
+
+    lines = [
+        f"{status_emoji} {entry.get('overview', '')}",
+        f"{pnl_str}  {profit_str}".strip(),
+        f"**Trades:** {entry.get('total_trades', 0)}",
+    ]
+
+    trades = entry.get("trades", [])
+    if trades:
+        lines.append("\n**Trade Details:**")
+        for t in trades:
+            instrument = t.get("instrument", "?")
+            t_type = t.get("type", "?").upper()
+            strategy = t.get("strategy", "unknown").replace("_", " ")
+            exit_r = t.get("exit_reason", "unknown").replace("_", " ")
+            t_pnl = t.get("pnl")
+            pnl_part = f" | PnL `{t_pnl}`" if t_pnl is not None else ""
+            lines.append(f"• `{instrument}` {t_type} | {strategy} | exit: {exit_r}{pnl_part}")
+
+    issues = entry.get("issues", [])
+    if issues:
+        lines.append("\n**Issues:**")
+        lines.extend(f"• {i}" for i in issues)
+
+    return "\n".join(lines)
+
 
 # -----------------------------------------------------------------------
 # Jobs
@@ -233,16 +288,35 @@ async def _eod_summary_job(channel: discord.TextChannel) -> None:
             n = config.MonitorConfig.eod_log_lines
             log_content = _read_log_lines(n)
             today_str = _now_ist().strftime("%d %B %Y")
+            date_key = _now_ist().strftime("%Y-%m-%d")
 
-            prompt = _EOD_PROMPT.format(date=today_str, log_content=log_content)
+            prompt = _EOD_PROMPT.format(
+                date=today_str, date_key=date_key, log_content=log_content
+            )
 
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, _gemini_one_shot, prompt)
+            raw = await loop.run_in_executor(None, _gemini_one_shot, prompt)
 
-            logger.info("EOD summary generated for %s", today_str)
-            header = f"📋 **End-of-Day Summary** — {today_str}"
+            # Parse structured JSON and persist to journal
+            entry: dict = {}
+            discord_body: str = ""
+            try:
+                # Strip accidental markdown fences if any
+                clean = re.sub(r"^```[\w]*\n?", "", raw.strip(), flags=re.MULTILINE)
+                clean = re.sub(r"```$", "", clean.strip())
+                entry = json.loads(clean)
+                save_journal_entry(date_key, entry)
+                discord_body = _format_eod_discord(entry, today_str)
+            except (json.JSONDecodeError, Exception) as parse_err:
+                logger.warning("EOD JSON parse failed: %s", parse_err)
+                # Fallback: post raw text, save raw under 'raw' key
+                discord_body = raw
+                save_journal_entry(date_key, {"date": date_key, "raw": raw})
+
+            logger.info("EOD summary generated and saved for %s", date_key)
+            header = f"📋 **End-of-Day Summary — alokrm** | {today_str}"
             foot = counter.footer()
-            await channel.send(f"{header}\n{result}\n{foot}")
+            await channel.send(f"{header}\n{discord_body}\n{foot}")
 
         except Exception as exc:
             logger.exception("Error in EOD summary job: %s", exc)
