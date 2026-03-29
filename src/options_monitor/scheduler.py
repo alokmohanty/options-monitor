@@ -54,8 +54,8 @@ Instructions:
 """
 
 _EOD_PROMPT = """\
-You are analysing the end-of-day log of an options trading bot for {date} (IST).
-Extract data ONLY for user: alokrm.
+You are an expert options trading analyst reviewing the end-of-day log of an automated \
+options trading bot for {date} (IST). Extract data ONLY for user: alokrm.
 
 --- LOG START ---
 {log_content}
@@ -64,26 +64,53 @@ Extract data ONLY for user: alokrm.
 Return a SINGLE valid JSON object (no markdown fences, no extra text) with exactly this schema:
 {{
   "date": "{date_key}",
-  "overview": "<one paragraph summary of the day for alokrm>",
+
+  "overview": "<2-3 sentences: your inference and perspective on the day — what market \
+conditions drove the outcomes, whether the strategy aligned with the market, and what \
+the result means in context. Go beyond facts; offer analysis.>",
+
+  "market_context": {{
+    "trend": "bullish" | "bearish" | "sideways" | "volatile" | "unknown",
+    "volatility_perception": "high" | "normal" | "low" | "unknown",
+    "notes": "<brief inference on market behaviour observed from the log>"
+  }},
+
   "overall_status": "smooth" | "minor_issues" | "critical_errors",
-  "profitable": true | false,
-  "total_pnl": <float or null if not in log>,
+  "profitable": true | false | null,
+  "total_pnl": <float or null>,
   "total_trades": <int>,
+
   "trades": [
     {{
-      "instrument": "<e.g. NIFTY 24000 CE>",
-      "type": "call" | "put",
-      "strategy": "inner_band" | "inner_band_reversal" | "outer_band" | "unknown",
-      "exit_reason": "sl_hit" | "target_hit" | "protection_50pct" | "protection_70pct" | "eod_exit" | "unknown",
-      "pnl": <float or null>
+      "instrument":      "<e.g. NIFTY 24000 CE>",
+      "type":            "call" | "put",
+      "strategy":        "inner_band" | "inner_band_reversal" | "outer_band" | "unknown",
+      "entry_time":      "<HH:MM IST or null>",
+      "exit_time":       "<HH:MM IST or null>",
+      "duration_minutes": <int or null>,
+      "expiry":          "<YYYY-MM-DD or null>",
+      "entry_price":     <float or null>,
+      "exit_price":      <float or null>,
+      "quantity_lots":   <int or null>,
+      "exit_reason":     "sl_hit" | "target_hit" | "protection_50pct" | "protection_70pct" | "eod_exit" | "unknown",
+      "pnl":             <float or null>,
+      "pnl_pct":         <float or null, pnl as % of premium paid>,
+      "setup_quality":   "good" | "average" | "poor" | null,
+      "trade_notes":     "<model inference: was the setup clean? did price action confirm? any anomaly?>"
     }}
   ],
-  "issues": ["<issue 1>", "<issue 2>"]
+
+  "lessons_learned": "<model’s specific inference: what worked, what didn’t, and what to watch in future trades. Reference concrete observations from the log.>",
+
+  "issues": ["<issue 1>", "<issue 2>"],
+
+  "confidence_score": null
 }}
 
 Rules:
 - Only include trades belonging to alokrm.
-- If a field is not present in the logs, use null or empty list.
+- If a field is not present in the logs, use null or an empty list/string.
+- For 'overview' and 'lessons_learned', do NOT just restate facts — draw inferences.
 - Do not include any text outside the JSON object.
 """
 
@@ -190,32 +217,52 @@ def _format_eod_discord(entry: dict, today_str: str) -> str:
         entry.get("overall_status", ""), "📊"
     )
     pnl = entry.get("total_pnl")
-    pnl_str = f"**P&L:** `{'+ ' if pnl and pnl > 0 else ''}{pnl}`" if pnl is not None else "**P&L:** not available"
-    profitable = entry.get("profitable")
-    profit_str = ("⬆️ Profitable" if profitable else "⬇️ Loss") if profitable is not None else ""
+    pnl_str = f"**P&L:** `{'%.2f' % pnl}`" if pnl is not None else "**P&L:** not available"
+    profit_emoji = ("⬆️" if entry.get("profitable") else "⬇️") if entry.get("profitable") is not None else "🟡"
+
+    mctx = entry.get("market_context", {})
+    market_str = ""
+    if mctx:
+        trend = mctx.get("trend", "unknown")
+        vol = mctx.get("volatility_perception", "unknown")
+        market_str = f"📈 **Market:** {trend} | volatility: {vol}"
 
     lines = [
-        f"{status_emoji} {entry.get('overview', '')}",
-        f"{pnl_str}  {profit_str}".strip(),
-        f"**Trades:** {entry.get('total_trades', 0)}",
+        f"{status_emoji} {profit_emoji} {entry.get('overview', '')}",
+        f"{pnl_str}  | **Trades:** {entry.get('total_trades', 0)}",
     ]
+    if market_str:
+        lines.append(market_str)
 
+    # Trades
     trades = entry.get("trades", [])
     if trades:
-        lines.append("\n**Trade Details:**")
+        lines.append("\n**Trades:**")
         for t in trades:
             instrument = t.get("instrument", "?")
             t_type = t.get("type", "?").upper()
             strategy = t.get("strategy", "unknown").replace("_", " ")
             exit_r = t.get("exit_reason", "unknown").replace("_", " ")
             t_pnl = t.get("pnl")
-            pnl_part = f" | PnL `{t_pnl}`" if t_pnl is not None else ""
-            lines.append(f"• `{instrument}` {t_type} | {strategy} | exit: {exit_r}{pnl_part}")
+            quality = t.get("setup_quality") or ""
+            quality_str = f" [{quality}]" if quality else ""
+            pnl_part = f" | P&L `{'%.2f' % t_pnl}`" if t_pnl is not None else ""
+            duration = t.get("duration_minutes")
+            dur_str = f" | {duration}m" if duration else ""
+            lines.append(f"• `{instrument}` {t_type}{quality_str} | {strategy} | exit: {exit_r}{dur_str}{pnl_part}")
 
+    # Lessons learned
+    lessons = entry.get("lessons_learned", "")
+    if lessons:
+        lines.append(f"\n📚 **Lessons:** {lessons}")
+
+    # Issues
     issues = entry.get("issues", [])
     if issues:
         lines.append("\n**Issues:**")
         lines.extend(f"• {i}" for i in issues)
+
+    lines.append("🔮 **Confidence score:** `TBD`")
 
     return "\n".join(lines)
 
