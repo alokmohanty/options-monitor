@@ -12,7 +12,7 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 
-from options_monitor import config
+from options_monitor import config, counter
 from options_monitor.tools import TOOLS
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,7 @@ class Agent:
         for attempt in range(max_retries):
             try:
                 response = self._chat.send_message(user_message)
+                counter.increment()
                 text = response.text
                 # If the model hit the tool-call limit mid-chain, response.text is
                 # empty. Send a follow-up so it summarises with what it gathered.
@@ -74,6 +75,7 @@ class Agent:
                         "Based on the information you have gathered so far, "
                         "please answer the original question."
                     )
+                    counter.increment()
                     text = follow_up.text
                 return text or "(no response)"
             except genai_errors.ClientError as exc:

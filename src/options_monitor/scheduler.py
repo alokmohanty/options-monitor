@@ -23,7 +23,7 @@ import discord
 from google import genai
 from google.genai import types
 
-from options_monitor import config
+from options_monitor import config, counter
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,7 @@ async def _periodic_check_job(channel: discord.TextChannel) -> None:
 
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, _gemini_one_shot, prompt)
+            counter.increment()
 
             is_ok = result.strip().upper() == "OK"
             logger.info("Periodic check at %s: %s", now_str, "OK" if is_ok else "ISSUES FOUND")
@@ -174,6 +175,7 @@ async def _eod_summary_job(channel: discord.TextChannel) -> None:
 
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, _gemini_one_shot, prompt)
+            counter.increment()
 
             logger.info("EOD summary generated for %s", today_str)
             header = f"📋 **End-of-Day Summary** — {today_str}"

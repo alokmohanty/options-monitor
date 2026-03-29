@@ -13,7 +13,7 @@ from collections import defaultdict
 import discord
 from discord.ext import commands
 
-from options_monitor import config
+from options_monitor import config, counter
 from options_monitor.agent import Agent
 from options_monitor.scheduler import start_scheduler
 
@@ -219,6 +219,8 @@ class MonitorBot(commands.Bot):
             loop = asyncio.get_event_loop()
             answer = await loop.run_in_executor(None, agent.ask, question)
 
-        chunks = _split_message(answer)
+        # Append API call counter footer to the last chunk
+        answer_with_footer = answer + "\n" + counter.footer()
+        chunks = _split_message(answer_with_footer)
         for chunk in chunks:
             await ctx.send(chunk)
