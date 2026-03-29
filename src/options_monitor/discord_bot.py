@@ -7,6 +7,7 @@ is isolated per channel.
 
 import asyncio
 import logging
+import re
 from collections import defaultdict
 
 import discord
@@ -19,6 +20,31 @@ logger = logging.getLogger(__name__)
 
 # Discord messages have a 2000-character limit per message
 _DISCORD_MAX_LEN = 1990
+
+# Hashtag hints that prepend context instructions to the user's question
+_TAG_HINTS: dict[str, str] = {
+    "log":     "Focus on the trading bot log file to answer this: ",
+    "errors":  "Check the log file for errors to answer this: ",
+    "trades":  "Check the log file for trade activity to answer this: ",
+    "code":    "Read the trading bot source code to answer this: ",
+    "config":  "Read the trading bot config files to answer this: ",
+}
+
+
+def _apply_tag_hints(text: str) -> str:
+    """
+    Detect leading hashtags (e.g. #log, #code) and prepend a context
+    instruction so the agent knows where to look. Strips the tag from
+    the returned question.
+    """
+    tags = re.findall(r"#(\w+)", text)
+    question = re.sub(r"#\w+\s*", "", text).strip()
+    for tag in tags:
+        hint = _TAG_HINTS.get(tag.lower())
+        if hint:
+            question = hint + question
+            break  # use the first recognised tag only
+    return question or text
 
 
 def _split_message(text: str) -> list[str]:
@@ -65,8 +91,16 @@ class MonitorBot(commands.Bot):
         if allowed and message.channel.id not in allowed:
             return
 
-        # Let command handlers run first
+        # Let command handlers (! prefix) run first
         await self.process_commands(message)
+
+        # Direct chat: if message doesn't start with the command prefix,
+        # treat it as a question to the agent
+        prefix = config.DiscordConfig.command_prefix
+        if not message.content.startswith(prefix):
+            question = _apply_tag_hints(message.content)
+            ctx = await self.get_context(message)
+            await self._handle_question(ctx, question)
 
     # ------------------------------------------------------------------
     # Commands
@@ -100,22 +134,36 @@ class MonitorBot(commands.Bot):
             prefix = config.DiscordConfig.command_prefix
             embed = discord.Embed(
                 title="Options Monitor Bot",
-                description="I can answer questions about your options trading bot.",
+                description="Just type your question directly — no prefix needed!\nOr use hashtag hints to focus the answer.",
                 color=discord.Color.blue(),
             )
             embed.add_field(
-                name=f"`{prefix}ask <question>`",
-                value="Ask anything about the bot: errors, trades, strategy, code.",
+                name="Direct chat",
+                value="Just type your question, e.g. `what trades ran yesterday?`",
                 inline=False,
             )
             embed.add_field(
-                name=f"`{prefix}reset`",
-                value="Clear conversation history for this channel.",
+                name="Hashtag hints",
+                value=(
+                    "`#log` — focus on log file\n"
+                    "`#errors` — focus on errors\n"
+                    "`#trades` — focus on trade activity\n"
+                    "`#code` — focus on source code\n"
+                    "`#config` — focus on config files\n"
+                    "e.g. `#log what happened on 27th march?`"
+                ),
                 inline=False,
             )
             embed.add_field(
-                name=f"`{prefix}help`",
-                value="Show this help message.",
+                name="Commands",
+                value=(
+                    f"`{prefix}reset` — clear conversation history\n"
+                    f"`{prefix}logs [n]` — show last N log lines\n"
+                    f"`{prefix}errors` — summarise recent errors\n"
+                    f"`{prefix}trades` — summarise recent trades\n"
+                    f"`{prefix}strategy` — explain trading strategy\n"
+                    f"`{prefix}help` — show this message"
+                ),
                 inline=False,
             )
             embed.set_footer(text="Powered by Gemini AI")
