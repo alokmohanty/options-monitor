@@ -71,6 +71,7 @@ class MonitorConfig:
     check_log_lines: int = _m.get("check_log_lines", 100)
     eod_summary_time: str = _m.get("eod_summary_time", "15:35")
     eod_log_lines: int = _m.get("eod_log_lines", 2000)
+    eod_model: str = _m.get("eod_model", _raw.get("gemini", {}).get("model", "gemini-3-flash-preview"))
     alert_on_ok: bool = _m.get("alert_on_ok", False)
 
 

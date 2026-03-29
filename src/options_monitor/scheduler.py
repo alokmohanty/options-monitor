@@ -57,6 +57,15 @@ _EOD_PROMPT = """\
 You are an expert options trading analyst reviewing the end-of-day log of an automated \
 options trading bot for {date} (IST). Extract data ONLY for user: alokrm.
 
+Trading windows configured for this bot:
+  Inner band windows:
+    09:15–09:30  BOTH directions
+    09:30–10:00  SHORT only
+    11:00–12:00  BOTH directions
+  Outer band window:
+    09:15–14:45  BOTH directions
+  Square-off time: 14:57
+
 --- LOG START ---
 {log_content}
 --- LOG END ---
@@ -82,25 +91,39 @@ the result means in context. Go beyond facts; offer analysis.>",
 
   "trades": [
     {{
-      "instrument":      "<e.g. NIFTY 24000 CE>",
-      "type":            "call" | "put",
-      "strategy":        "inner_band" | "inner_band_reversal" | "outer_band" | "unknown",
-      "entry_time":      "<HH:MM IST or null>",
-      "exit_time":       "<HH:MM IST or null>",
+      "instrument":       "<e.g. NIFTY 24000 CE>",
+      "type":             "call" | "put",
+      "strategy":         "inner_band" | "inner_band_reversal" | "outer_band" | "unknown",
+      "entry_time":       "<HH:MM IST or null>",
+      "exit_time":        "<HH:MM IST or null>",
       "duration_minutes": <int or null>,
-      "expiry":          "<YYYY-MM-DD or null>",
-      "entry_price":     <float or null>,
-      "exit_price":      <float or null>,
-      "quantity_lots":   <int or null>,
-      "exit_reason":     "sl_hit" | "target_hit" | "protection_50pct" | "protection_70pct" | "eod_exit" | "unknown",
-      "pnl":             <float or null>,
-      "pnl_pct":         <float or null, pnl as % of premium paid>,
-      "setup_quality":   "good" | "average" | "poor" | null,
-      "trade_notes":     "<model inference: was the setup clean? did price action confirm? any anomaly?>"
+      "expiry":           "<YYYY-MM-DD or null>",
+      "entry_price":      <float or null>,
+      "exit_price":       <float or null>,
+      "quantity_lots":    <int or null>,
+      "exit_reason":      "sl_hit" | "target_hit" | "protection_50pct" | "protection_70pct" | "eod_exit" | "unknown",
+      "pnl":              <float or null>,
+      "pnl_pct":          <float or null>,
+      "setup_quality":    "good" | "average" | "poor" | null,
+      "trade_notes":      "<model inference: was the setup clean? did price action confirm? any anomaly?>"
     }}
   ],
 
-  "lessons_learned": "<model’s specific inference: what worked, what didn’t, and what to watch in future trades. Reference concrete observations from the log.>",
+  "skipped_entries": [
+    {{
+      "time":                  "<HH:MM IST>",
+      "strategy":              "inner_band" | "inner_band_reversal" | "outer_band" | "unknown",
+      "side":                  "Long" | "Short",
+      "skip_reason":           "risk_reward" | "outside_window",
+      "skip_detail":           "<brief reason from log, e.g. 'RR 1:0.8 below threshold' or 'signal at 10:15 outside inner band window'>",
+      "nifty_close_at_signal": <float or null, Nifty CANDLE CLOSE price at signal time — NOT live spot>,
+      "potential_target_pts":  <float or null, Nifty points from signal level to target>,
+      "potential_sl_pts":      <float or null, Nifty points from signal level to SL>,
+      "potential_pnl_pts":     <float or null, actual Nifty points outcome if known from log — positive if target hit, negative if SL would have been hit>
+    }}
+  ],
+
+  "lessons_learned": "<model’s specific inference: what worked, what didn’t, and what to watch in future trades. Reference concrete observations from the log. If skipped entries would have been profitable, note that too.>",
 
   "issues": ["<issue 1>", "<issue 2>"],
 
@@ -108,7 +131,12 @@ the result means in context. Go beyond facts; offer analysis.>",
 }}
 
 Rules:
-- Only include trades belonging to alokrm.
+- Only include trades and skipped entries belonging to alokrm.
+- skipped_entries has TWO sources:
+  (1) risk_reward: the bot calculated risk/reward and rejected the entry — look for log lines mentioning RR ratio, insufficient reward, skipping signal, etc.
+  (2) outside_window: a signal occurred but the time fell outside the inner/outer band windows defined above.
+- For nifty_close_at_signal: use the Nifty CANDLE CLOSE price logged at or just before the signal time. Do NOT use live Nifty spot from websocket.
+- For potential_pnl_pts: if the log shows subsequent price levels, infer whether target or SL was hit and calculate the Nifty points outcome.
 - If a field is not present in the logs, use null or an empty list/string.
 - For 'overview' and 'lessons_learned', do NOT just restate facts — draw inferences.
 - Do not include any text outside the JSON object.
@@ -198,15 +226,15 @@ def _read_log_since(minutes: int) -> str:
     return "".join(recent)
 
 
-def _gemini_one_shot(prompt: str) -> str:
+def _gemini_one_shot(prompt: str, max_tokens: int = 1024, model: str | None = None) -> str:
     """Single stateless Gemini call — no history, no tools, just text in/out."""
     client = genai.Client(api_key=config.GeminiConfig.api_key)
     response = client.models.generate_content(
-        model=config.GeminiConfig.model,
+        model=model or config.GeminiConfig.model,
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.2,  # low temp for factual/analytical tasks
-            max_output_tokens=1024,
+            max_output_tokens=max_tokens,
         ),
     )
     return response.text or "(no response)"
@@ -255,7 +283,24 @@ def _format_eod_discord(entry: dict, today_str: str) -> str:
     lessons = entry.get("lessons_learned", "")
     if lessons:
         lines.append(f"\n📚 **Lessons:** {lessons}")
-
+    # Skipped entries
+    skipped = entry.get("skipped_entries", [])
+    if skipped:
+        lines.append(f"\n\u23ed\ufe0f **Skipped entries ({len(skipped)}):**")
+        for s in skipped:
+            time = s.get("time", "?")
+            strategy = s.get("strategy", "unknown").replace("_", " ")
+            side = s.get("side", "?")
+            reason = s.get("skip_reason", "?").replace("_", " ")
+            detail = s.get("skip_detail", "")
+            nifty = s.get("nifty_close_at_signal")
+            target = s.get("potential_target_pts")
+            sl = s.get("potential_sl_pts")
+            pnl_pts = s.get("potential_pnl_pts")
+            nifty_str = f" @ `{nifty}`" if nifty else ""
+            rr_str = f" T:`+{target}pts` SL:`-{sl}pts`" if target and sl else ""
+            outcome_str = f" → would have been `{'%+.1f' % pnl_pts}pts`" if pnl_pts is not None else ""
+            lines.append(f"\u25ab\ufe0f `{time}` {side} {strategy}{nifty_str} | skip: {reason} ({detail}){rr_str}{outcome_str}")
     # Issues
     issues = entry.get("issues", [])
     if issues:
@@ -342,7 +387,14 @@ async def _eod_summary_job(channel: discord.TextChannel) -> None:
             )
 
             loop = asyncio.get_event_loop()
-            raw = await loop.run_in_executor(None, _gemini_one_shot, prompt)
+            raw = await loop.run_in_executor(
+                None,
+                lambda: _gemini_one_shot(
+                    prompt,
+                    max_tokens=4096,
+                    model=config.MonitorConfig.eod_model,
+                ),
+            )
 
             # Parse structured JSON and persist to journal
             entry: dict = {}
