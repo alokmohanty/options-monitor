@@ -4,6 +4,7 @@ import logging
 import sys
 
 from options_monitor import config
+from options_monitor.counter import install_http_hook
 from options_monitor.discord_bot import MonitorBot
 
 
@@ -28,6 +29,7 @@ def main() -> None:
         sys.exit(1)
 
     logger.info("Starting options-monitor bot with model: %s", config.GeminiConfig.model)
+    install_http_hook()  # must be before any genai.Client is created
     bot = MonitorBot()
     bot.run(config.DiscordConfig.bot_token, log_handler=None)
 
