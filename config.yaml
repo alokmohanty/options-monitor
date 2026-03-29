@@ -36,3 +36,14 @@ trading_bot:
     - "venv"
     - "node_modules"
     - ".pytest_cache"
+
+monitor:
+  enabled: true
+  timezone: "Asia/Kolkata"          # IST
+  trading_start: "09:15"            # Start periodic checks (HH:MM IST)
+  trading_end: "15:30"              # Stop periodic checks (HH:MM IST)
+  check_interval_minutes: 3         # How often to check the log
+  check_log_lines: 100              # Lines to read per periodic check
+  eod_summary_time: "15:35"         # Time to post end-of-day summary (HH:MM IST)
+  eod_log_lines: 2000               # Lines to read for EOD summary
+  alert_on_ok: true                # If true, post even when everything looks normal

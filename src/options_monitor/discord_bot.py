@@ -15,6 +15,7 @@ from discord.ext import commands
 
 from options_monitor import config
 from options_monitor.agent import Agent
+from options_monitor.scheduler import start_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class MonitorBot(commands.Bot):
     async def on_ready(self) -> None:
         logger.info("Logged in as %s (ID: %s)", self.user, self.user.id)
         await self.tree.sync()
+        await start_scheduler(self)
 
     async def on_message(self, message: discord.Message) -> None:
         # Ignore messages from bots (including self)

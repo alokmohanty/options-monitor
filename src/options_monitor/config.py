@@ -58,6 +58,22 @@ class TradingBotConfig:
     )
 
 
+# ---------------------------------------------------------------------------
+# Monitor (scheduled log checks + EOD summary)
+# ---------------------------------------------------------------------------
+class MonitorConfig:
+    _m = _raw.get("monitor", {})
+    enabled: bool = _m.get("enabled", True)
+    timezone: str = _m.get("timezone", "Asia/Kolkata")
+    trading_start: str = _m.get("trading_start", "09:15")
+    trading_end: str = _m.get("trading_end", "15:30")
+    check_interval_minutes: int = _m.get("check_interval_minutes", 3)
+    check_log_lines: int = _m.get("check_log_lines", 100)
+    eod_summary_time: str = _m.get("eod_summary_time", "15:35")
+    eod_log_lines: int = _m.get("eod_log_lines", 2000)
+    alert_on_ok: bool = _m.get("alert_on_ok", False)
+
+
 def validate() -> None:
     """Raise ValueError if required secrets are missing."""
     missing = []
