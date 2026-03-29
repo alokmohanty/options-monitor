@@ -22,6 +22,8 @@ _hooked: bool = False
 
 # Persist to data/counter.json (relative to project root)
 _DATA_FILE = Path(__file__).resolve().parents[2] / "data" / "counter.json"
+# Legacy path used before parents[2] fix — migrate if found
+_LEGACY_DATA_FILE = Path(__file__).resolve().parents[3] / "data" / "counter.json"
 
 
 def _ist_now() -> datetime:
@@ -30,6 +32,13 @@ def _ist_now() -> datetime:
 
 def _load() -> dict:
     """Load persisted counts from disk, or return empty defaults."""
+    # Migrate from legacy path if new path doesn't exist yet
+    if not _DATA_FILE.exists() and _LEGACY_DATA_FILE.exists():
+        try:
+            _DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _DATA_FILE.write_text(_LEGACY_DATA_FILE.read_text())
+        except Exception:
+            pass
     try:
         if _DATA_FILE.exists():
             return json.loads(_DATA_FILE.read_text())
@@ -121,8 +130,10 @@ def install_http_hook() -> None:
 def stats() -> tuple[int, int]:
     """Return (calls_today, calls_this_month) — persisted across restarts."""
     with _lock:
-        state = _refresh(_load())
-        return state["calls_today"], state["calls_month"]
+        state = _load()
+        refreshed = _refresh(state)
+        _save(refreshed)  # persist any day/month rollover immediately
+        return refreshed["calls_today"], refreshed["calls_month"]
 
 
 def footer() -> str:
