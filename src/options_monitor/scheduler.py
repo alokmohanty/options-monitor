@@ -27,7 +27,7 @@ from google.genai import types
 
 from options_monitor import config
 from options_monitor import counter
-from options_monitor.tools import save_journal_entry
+from options_monitor.tools import save_journal_entry, _find_bot_pids
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +324,10 @@ async def _periodic_check_job(channel: discord.TextChannel) -> None:
         await asyncio.sleep(interval)
 
         if not _is_trading_hours():
+            continue
+
+        if not _find_bot_pids():
+            logger.info("Periodic check skipped — trading bot is not running")
             continue
 
         try:
