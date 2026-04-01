@@ -342,12 +342,11 @@ async def _periodic_check_job(channel: discord.TextChannel) -> None:
             logger.info("Periodic check at %s: %s", now_str, "OK" if is_ok else "ISSUES FOUND")
 
             if not is_ok or config.MonitorConfig.alert_on_ok:
-                header = f"📊 **Bot Monitor** `{now_str} IST`"
                 foot = counter.footer()
                 if is_ok:
-                    await channel.send(f"{header}\n✅ Everything looks normal.\n{foot}")
+                    await channel.send(f"🟢 **Bot Monitor** `{now_str} IST`\n{foot}")
                 else:
-                    await channel.send(f"{header}\n⚠️ Issues detected:\n{result}\n{foot}")
+                    await channel.send(f"🟠 **Bot Monitor** `{now_str} IST`\n{result}\n{foot}")
 
         except Exception as exc:
             logger.exception("Error in periodic check job: %s", exc)
