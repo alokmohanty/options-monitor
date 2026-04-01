@@ -468,10 +468,19 @@ def deploy_monitor() -> str:
         return f"❌ Monitor directory not found: {root}"
 
     outputs: list[str] = []
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
 
     # 1. git pull
     try:
-        res = subprocess.run(["git", "pull"], cwd=str(root), capture_output=True, text=True, timeout=30)
+        res = subprocess.run(
+            ["git", "pull"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env
+        )
         outputs.append(f"• **git pull**: {'OK' if res.returncode == 0 else 'Error'}\n```\n{res.stdout or res.stderr}\n```")
         if res.returncode != 0:
             return f"❌ Deploy failed at **git pull**:\n\n" + "\n".join(outputs)
@@ -480,8 +489,6 @@ def deploy_monitor() -> str:
 
     # 2. uv sync
     try:
-        # Try to find uv in common locations if not in PATH
-        # Usually ~/.local/bin/uv on Ubuntu/EC2
         import shutil
         uv_path = shutil.which("uv") or "/home/ubuntu/.local/bin/uv"
         
@@ -490,7 +497,7 @@ def deploy_monitor() -> str:
             cwd=str(root),
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=120, # Increased timeout for slow EC2
         )
         outputs.append(f"• **uv sync**: {'OK' if res.returncode == 0 else 'Error'}\n```\n{res.stdout or res.stderr}\n```")
         if res.returncode != 0:
@@ -500,23 +507,15 @@ def deploy_monitor() -> str:
 
     # 3. sudo systemctl restart options-monitor
     try:
-        # Note: This might cause the current process to terminate!
-        # If it terminates, the response might not be sent.
-        # But systemctl restart usually happens asynchronously or finishes after start.
-        res = subprocess.run(
-            ["sudo", "systemctl", "restart", "options-monitor"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        outputs.append(f"• **systemctl restart**: {'OK' if res.returncode == 0 else 'Error'}")
-        if res.returncode != 0:
-            outputs[-1] += f"\n```\n{res.stderr}\n```"
-            return f"❌ Deploy failed at **systemctl restart**:\n\n" + "\n".join(outputs)
+        # We use a delayed background command to restart so we can return the message first.
+        # 'sudo -n' ensures it fails fast if a password is required.
+        cmd = "sleep 2 && sudo -n systemctl restart options-monitor"
+        subprocess.Popen(["bash", "-c", cmd], start_new_session=True)
+        outputs.append("• **systemctl restart**: Triggered (bot will restart in 2s)")
     except Exception as e:
-        return f"❌ Exception during systemctl restart: {e}"
+        return f"❌ Exception during systemctl restart trigger: {e}"
 
-    return "✅ **options-monitor** deployed and restarted successfully!\n\n" + "\n".join(outputs)
+    return "✅ **options-monitor** deployment steps completed!\n\n" + "\n".join(outputs)
 
 
 
