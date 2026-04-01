@@ -480,7 +480,18 @@ def deploy_monitor() -> str:
 
     # 2. uv sync
     try:
-        res = subprocess.run(["uv", "sync"], cwd=str(root), capture_output=True, text=True, timeout=60)
+        # Try to find uv in common locations if not in PATH
+        # Usually ~/.local/bin/uv on Ubuntu/EC2
+        import shutil
+        uv_path = shutil.which("uv") or "/home/ubuntu/.local/bin/uv"
+        
+        res = subprocess.run(
+            [uv_path, "sync"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
         outputs.append(f"• **uv sync**: {'OK' if res.returncode == 0 else 'Error'}\n```\n{res.stdout or res.stderr}\n```")
         if res.returncode != 0:
             return f"❌ Deploy failed at **uv sync**:\n\n" + "\n".join(outputs)
