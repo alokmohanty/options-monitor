@@ -16,6 +16,7 @@ discord:
 
 trading_bot:
   root_path: "/home/ubuntu/options-bot"
+  monitor_root_path: "/home/ubuntu/options-monitor"
   log_file: "/home/ubuntu/options-bot/logs/cron_output.log"
   max_log_lines: 2000                # Max lines to read from log file at once
   # File extensions to read when exploring bot code

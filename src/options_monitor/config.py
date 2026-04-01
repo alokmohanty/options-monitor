@@ -45,6 +45,9 @@ class DiscordConfig:
 # ---------------------------------------------------------------------------
 class TradingBotConfig:
     root_path: str = _raw.get("trading_bot", {}).get("root_path", "/home/ubuntu/options-bot")
+    monitor_root_path: str = _raw.get("trading_bot", {}).get(
+        "monitor_root_path", "/home/ubuntu/options-monitor"
+    )
     log_file: str = _raw.get("trading_bot", {}).get(
         "log_file", "/home/ubuntu/options-bot/logs/cron_output.log"
     )

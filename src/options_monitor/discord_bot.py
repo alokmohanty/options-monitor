@@ -16,7 +16,13 @@ from discord.ext import commands
 from options_monitor import config, counter
 from options_monitor.agent import Agent
 from options_monitor.scheduler import start_scheduler
-from options_monitor.tools import kill_trading_bot, restart_trading_bot, get_trading_bot_status
+from options_monitor.tools import (
+    kill_trading_bot,
+    restart_trading_bot,
+    get_trading_bot_status,
+    deploy_trading_bot,
+    deploy_monitor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +39,7 @@ _TAG_HINTS: dict[str, str] = {
 }
 
 # Hashtags that trigger direct process-control actions (bypass the agent)
-_ACTION_TAGS = {"kill", "restart", "status"}
+_ACTION_TAGS = {"kill", "restart", "status", "deploy-trade", "deploy-monitor"}
 
 
 def _apply_tag_hints(text: str) -> str:
@@ -185,6 +191,8 @@ class MonitorBot(commands.Bot):
                     f"`{prefix}kill` — kill the trading bot\n"
                     f"`{prefix}restart` — kill & restart the trading bot\n"
                     f"`{prefix}status` — check if trading bot is running\n"
+                    f"`{prefix}deploy-trade` — deploy options-bot\n"
+                    f"`{prefix}deploy-monitor` — deploy options-monitor\n"
                     f"`{prefix}help` — show this message"
                 ),
                 inline=False,
@@ -248,6 +256,20 @@ class MonitorBot(commands.Bot):
             """
             await self._run_action(ctx, "status")
 
+        @self.command(name="deploy-trade")
+        async def deploy_trade_cmd(ctx: commands.Context) -> None:
+            """Deploy the latest code for the trading bot.
+            Usage: !deploy-trade
+            """
+            await self._run_action(ctx, "deploy-trade")
+
+        @self.command(name="deploy-monitor")
+        async def deploy_monitor_cmd(ctx: commands.Context) -> None:
+            """Deploy and restart the options-monitor service.
+            Usage: !deploy-monitor
+            """
+            await self._run_action(ctx, "deploy-monitor")
+
     # ------------------------------------------------------------------
     # Process-control dispatcher (kill / restart — no agent involvement)
     # ------------------------------------------------------------------
@@ -263,6 +285,12 @@ class MonitorBot(commands.Bot):
                 result = await loop.run_in_executor(None, restart_trading_bot)
             elif action == "status":
                 result = await loop.run_in_executor(None, get_trading_bot_status)
+            elif action == "deploy-trade":
+                await ctx.send("⏳ Deploying options-bot...")
+                result = await loop.run_in_executor(None, deploy_trading_bot)
+            elif action == "deploy-monitor":
+                await ctx.send("⏳ Deploying options-monitor...")
+                result = await loop.run_in_executor(None, deploy_monitor)
             else:
                 result = f"Unknown action: {action}"
         foot = counter.footer()

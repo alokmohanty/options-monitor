@@ -433,6 +433,82 @@ def restart_trading_bot() -> str:
         return f"❌ Error starting trading bot: {e}"
 
 
+def deploy_trading_bot() -> str:
+    """
+    Deploy the latest code for the trading bot (options-bot).
+    Runs 'git pull' in the bot directory.
+    """
+    root = Path(config.TradingBotConfig.root_path)
+    if not root.exists():
+        return f"❌ Bot directory not found: {root}"
+
+    try:
+        result = subprocess.run(
+            ["git", "pull"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            return f"✅ **options-bot** deployed successfully:\n```\n{result.stdout or 'Already up to date.'}\n```"
+        else:
+            return f"❌ Error deploying **options-bot**:\n```\n{result.stderr}\n```"
+    except Exception as e:
+        return f"❌ Exception during deploy: {e}"
+
+
+def deploy_monitor() -> str:
+    """
+    Deploy the latest code for the monitor (options-monitor).
+    Runs 'git pull', 'uv sync', and 'sudo systemctl restart options-monitor'.
+    """
+    root = Path(config.TradingBotConfig.monitor_root_path)
+    if not root.exists():
+        return f"❌ Monitor directory not found: {root}"
+
+    outputs: list[str] = []
+
+    # 1. git pull
+    try:
+        res = subprocess.run(["git", "pull"], cwd=str(root), capture_output=True, text=True, timeout=30)
+        outputs.append(f"• **git pull**: {'OK' if res.returncode == 0 else 'Error'}\n```\n{res.stdout or res.stderr}\n```")
+        if res.returncode != 0:
+            return f"❌ Deploy failed at **git pull**:\n\n" + "\n".join(outputs)
+    except Exception as e:
+        return f"❌ Exception during git pull: {e}"
+
+    # 2. uv sync
+    try:
+        res = subprocess.run(["uv", "sync"], cwd=str(root), capture_output=True, text=True, timeout=60)
+        outputs.append(f"• **uv sync**: {'OK' if res.returncode == 0 else 'Error'}\n```\n{res.stdout or res.stderr}\n```")
+        if res.returncode != 0:
+            return f"❌ Deploy failed at **uv sync**:\n\n" + "\n".join(outputs)
+    except Exception as e:
+        return f"❌ Exception during uv sync: {e}"
+
+    # 3. sudo systemctl restart options-monitor
+    try:
+        # Note: This might cause the current process to terminate!
+        # If it terminates, the response might not be sent.
+        # But systemctl restart usually happens asynchronously or finishes after start.
+        res = subprocess.run(
+            ["sudo", "systemctl", "restart", "options-monitor"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        outputs.append(f"• **systemctl restart**: {'OK' if res.returncode == 0 else 'Error'}")
+        if res.returncode != 0:
+            outputs[-1] += f"\n```\n{res.stderr}\n```"
+            return f"❌ Deploy failed at **systemctl restart**:\n\n" + "\n".join(outputs)
+    except Exception as e:
+        return f"❌ Exception during systemctl restart: {e}"
+
+    return "✅ **options-monitor** deployed and restarted successfully!\n\n" + "\n".join(outputs)
+
+
+
 # ---------------------------------------------------------------------------
 # Tool registry used by the agent
 # ---------------------------------------------------------------------------
@@ -447,6 +523,8 @@ TOOLS = [
     get_trading_bot_status,
     kill_trading_bot,
     restart_trading_bot,
+    deploy_trading_bot,
+    deploy_monitor,
 ]
 
 TOOL_MAP: dict[str, callable] = {fn.__name__: fn for fn in TOOLS}
