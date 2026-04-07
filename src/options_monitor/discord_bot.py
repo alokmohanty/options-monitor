@@ -309,8 +309,16 @@ class MonitorBot(commands.Bot):
             loop = asyncio.get_event_loop()
             answer = await loop.run_in_executor(None, agent.ask, question)
 
-        # Append API call counter footer to the last chunk
-        answer_with_footer = answer + "\n" + counter.footer()
+        foot = counter.footer()
+        tokens = getattr(agent, "current_tokens", 0)
+        if tokens > 0:
+            if tokens >= 1000:
+                token_str = f"{tokens / 1000:.1f}k".replace(".0k", "k")
+            else:
+                token_str = str(tokens)
+            foot += f" | Context: `{token_str}` tokens"
+
+        answer_with_footer = answer + "\n" + foot
         chunks = _split_message(answer_with_footer)
         for chunk in chunks:
             await ctx.send(chunk)

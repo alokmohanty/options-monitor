@@ -54,6 +54,7 @@ class Agent:
         self._new_chat()
 
     def _new_chat(self) -> None:
+        self.current_tokens = 0
         self._chat = self._client.chats.create(
             model=config.GeminiConfig.model,
             config=_make_chat_config(),
@@ -75,6 +76,11 @@ class Agent:
                         "please answer the original question."
                     )
                     text = follow_up.text
+                    if getattr(follow_up, "usage_metadata", None):
+                        self.current_tokens = getattr(follow_up.usage_metadata, "total_token_count", self.current_tokens)
+                else:
+                    if getattr(response, "usage_metadata", None):
+                        self.current_tokens = getattr(response.usage_metadata, "total_token_count", self.current_tokens)
                 return text or "(no response)"
             except genai_errors.ClientError as exc:
                 is_rate_limited = (
