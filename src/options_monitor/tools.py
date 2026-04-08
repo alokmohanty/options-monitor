@@ -521,11 +521,15 @@ def deploy_monitor() -> str:
 def trigger_eod_script(date_str: str = "") -> str:
     """Run the retrigger_eod.py script to generate the EOD report manually."""
     import shutil
-    # The script lives in the monitor repo, not the bot repo
-    # Usually root_path is /home/ubuntu/options-bot, we want monitor_root_path but let's just use Python's path
-    root = Path(__file__).resolve().parents[3] 
+    # Use the monitor_root_path from config for reliable resolution on EC2
+    root = Path(config.TradingBotConfig.monitor_root_path).resolve()
     script = root / "scripts" / "retrigger_eod.py"
     
+    if not script.exists():
+        # Fallback to local-relative path for development robustness
+        root = Path(__file__).resolve().parents[2]
+        script = root / "scripts" / "retrigger_eod.py"
+        
     if not script.exists():
         return f"❌ Script not found: {script}"
         
