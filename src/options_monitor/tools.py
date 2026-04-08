@@ -518,6 +518,29 @@ def deploy_monitor() -> str:
     return "✅ **options-monitor** deployment steps completed!\n\n" + "\n".join(outputs)
 
 
+def trigger_eod_script(date_str: str = "") -> str:
+    """Run the retrigger_eod.py script to generate the EOD report manually."""
+    import shutil
+    # The script lives in the monitor repo, not the bot repo
+    # Usually root_path is /home/ubuntu/options-bot, we want monitor_root_path but let's just use Python's path
+    root = Path(__file__).resolve().parents[3] 
+    script = root / "scripts" / "retrigger_eod.py"
+    
+    if not script.exists():
+        return f"❌ Script not found: {script}"
+        
+    uv_path = shutil.which("uv") or "/home/ubuntu/.local/bin/uv"
+    cmd = [uv_path, "run", str(script)]
+    if date_str:
+        cmd.append(date_str.strip())
+        
+    try:
+        res = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, timeout=120)
+        output = res.stdout if res.returncode == 0 else res.stderr
+        return f"```\n{output[:1900]}\n```" # Cap output length to fit Discord limits securely
+    except Exception as e:
+        return f"❌ Exception running script: {e}"
+
 
 # ---------------------------------------------------------------------------
 # Tool registry used by the agent
@@ -535,6 +558,7 @@ TOOLS = [
     restart_trading_bot,
     deploy_trading_bot,
     deploy_monitor,
+    trigger_eod_script,
 ]
 
 TOOL_MAP: dict[str, callable] = {fn.__name__: fn for fn in TOOLS}

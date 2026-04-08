@@ -22,6 +22,7 @@ from options_monitor.tools import (
     get_trading_bot_status,
     deploy_trading_bot,
     deploy_monitor,
+    trigger_eod_script,
 )
 
 logger = logging.getLogger(__name__)
@@ -193,6 +194,7 @@ class MonitorBot(commands.Bot):
                     f"`{prefix}status` — check if trading bot is running\n"
                     f"`{prefix}deploy-trade` — deploy options-bot\n"
                     f"`{prefix}deploy-monitor` — deploy options-monitor\n"
+                    f"`{prefix}retrigger-eod [date]` — re-generate EOD journal\n"
                     f"`{prefix}help` — show this message"
                 ),
                 inline=False,
@@ -270,6 +272,14 @@ class MonitorBot(commands.Bot):
             """
             await self._run_action(ctx, "deploy-monitor")
 
+        @self.command(name="retrigger-eod")
+        async def retrigger_eod_cmd(ctx: commands.Context, date_str: str = "") -> None:
+            """Retrigger the EOD bot report generation.
+            Usage: !retrigger-eod [YYYY-MM-DD]
+            """
+            action_tag = f"retrigger-eod|{date_str}" if date_str else "retrigger-eod"
+            await self._run_action(ctx, action_tag)
+
     # ------------------------------------------------------------------
     # Process-control dispatcher (kill / restart — no agent involvement)
     # ------------------------------------------------------------------
@@ -291,6 +301,11 @@ class MonitorBot(commands.Bot):
             elif action == "deploy-monitor":
                 await ctx.send("⏳ Deploying options-monitor...")
                 result = await loop.run_in_executor(None, deploy_monitor)
+            elif action.startswith("retrigger-eod"):
+                parts = action.split("|")
+                date_str = parts[1] if len(parts) > 1 else ""
+                await ctx.send(f"⏳ Retriggering EOD script for {date_str or 'today'}...")
+                result = await loop.run_in_executor(None, trigger_eod_script, date_str)
             else:
                 result = f"Unknown action: {action}"
         foot = counter.footer()
