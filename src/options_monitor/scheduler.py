@@ -270,65 +270,63 @@ def _format_eod_discord(entry: dict, today_str: str) -> str:
     profit_emoji = ("⬆️" if entry.get("profitable") else "⬇️") if entry.get("profitable") is not None else "🟡"
 
     mctx = entry.get("market_context", {})
-    market_str = ""
-    if mctx:
-        trend = mctx.get("trend", "unknown")
-        vol = mctx.get("volatility_perception", "unknown")
-        market_str = f"📈 **Market:** {trend} | volatility: {vol}"
+    trend = mctx.get("trend", "unknown")
+    vol = mctx.get("volatility_perception", "normal")
+    notes = mctx.get("notes", "")
 
+    # Header section
     lines = [
-        f"{status_emoji} {profit_emoji} {entry.get('overview', '')}",
-        f"{pnl_str}  | **Trades:** {entry.get('total_trades', 0)}",
+        f"{entry.get('overview', '')}\n",
+        f"🗓️ **EOD Trading Summary: {date_str}**",
+        f"Overall Status: {'Technical Issues' if entry.get('issues') else 'Normal Operation'} | Profitable: {'✅' if (entry.get('total_pnl', 0) or 0) > 0 else '❌'}",
+        "\n---",
+        "\n#### 📈 Financial Overview",
+        f"Total PnL: Approx `{entry.get('total_pnl', 0)}`",
+        f"Total Trades: {entry.get('total_trades', 0)}",
+        f"Market Trend: {trend.capitalize()} | Volatility: {vol.capitalize()}",
     ]
-    if market_str:
-        lines.append(market_str)
 
-    # Trades
+    # Trades Table
+    lines.append("\n#### 📉 Trade Details")
     trades = entry.get("trades", [])
-    if trades:
-        lines.append("\n**Trades:**")
+    if not trades:
+        lines.append("_No trades executed today._")
+    else:
+        lines.append("| Instrument | Type | Strategy | Exit Reason | PnL | Note |")
+        lines.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
         for t in trades:
-            instrument = t.get("instrument", "?")
+            inst = t.get("instrument", "?")
             t_type = t.get("type", "?").upper()
-            strategy = t.get("strategy", "unknown").replace("_", " ")
-            exit_r = t.get("exit_reason", "unknown").replace("_", " ")
-            t_pnl = t.get("pnl")
-            quality = t.get("setup_quality") or ""
-            quality_str = f" [{quality}]" if quality else ""
-            pnl_part = f" | P&L `{'%.2f' % t_pnl}`" if t_pnl is not None else ""
-            duration = t.get("duration_minutes")
-            dur_str = f" | {duration}m" if duration else ""
-            lines.append(f"• `{instrument}` {t_type}{quality_str} | {strategy} | exit: {exit_r}{dur_str}{pnl_part}")
+            strat = t.get("strategy", "").replace("_", " ")
+            exit_r = t.get("exit_reason", "").replace("_", " ")
+            pnl = t.get("pnl", 0)
+            note = t.get("note", "") or t.get("setup_quality", "")
+            lines.append(f"| {inst} | {t_type} | {strat} | {exit_r} | {pnl} | {note} |")
 
-    # Lessons learned
-    lessons = entry.get("lessons_learned", "")
-    if lessons:
-        lines.append(f"\n📚 **Lessons:** {lessons}")
-    # Skipped entries
-    skipped = entry.get("skipped_entries", [])
-    if skipped:
-        lines.append(f"\n\u23ed\ufe0f **Skipped entries ({len(skipped)}):**")
-        for s in skipped:
-            time = s.get("time", "?")
-            strategy = s.get("strategy", "unknown").replace("_", " ")
-            side = s.get("side", "?")
-            reason = s.get("skip_reason", "?").replace("_", " ")
-            detail = s.get("skip_detail", "")
-            nifty = s.get("nifty_close_at_signal")
-            target = s.get("potential_target_pts")
-            sl = s.get("potential_sl_pts")
-            pnl_pts = s.get("potential_pnl_pts")
-            nifty_str = f" @ `{nifty}`" if nifty else ""
-            rr_str = f" T:`+{target}pts` SL:`-{sl}pts`" if target and sl else ""
-            outcome_str = f" → would have been `{'%+.1f' % pnl_pts}pts`" if pnl_pts is not None else ""
-            lines.append(f"\u25ab\ufe0f `{time}` {side} {strategy}{nifty_str} | skip: {reason} ({detail}){rr_str}{outcome_str}")
-    # Issues
+    # Issues section
     issues = entry.get("issues", [])
     if issues:
-        lines.append("\n**Issues:**")
+        lines.append("\n#### ⚠️ Issues & Observations")
         lines.extend(f"• {i}" for i in issues)
 
-    lines.append("🔮 **Confidence score:** `TBD`")
+    # Lessons & Market Notes
+    lines.append("\n#### 💡 Lessons & Observations")
+    if entry.get("lessons_learned"):
+        lines.append(entry.get("lessons_learned"))
+    if notes:
+        lines.append(f"\n_Market Note: {notes}_")
+
+    # Skipped entries (optional technical block)
+    skipped = entry.get("skipped_entries", [])
+    if skipped:
+        lines.append(f"\n\u23ed\ufe0f **Skipped Signals ({len(skipped)})**")
+        # Keep this compact as it's secondary
+        for s in skipped:
+            lines.append(f"\u25ab\ufe0f `{s.get('time', '?')}` {s.get('side', '?')} {s.get('strategy', '')} | {s.get('skip_reason', '')}")
+
+    lines.append("\n---")
+    lines.append("\nSummary for Journal:")
+    lines.append(f"> \"{entry.get('overview', '')}\"")
 
     return "\n".join(lines)
 
