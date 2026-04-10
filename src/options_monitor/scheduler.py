@@ -186,13 +186,34 @@ def _parse_line_ts(line: str) -> datetime | None:
 
 
 def _read_log_lines(n: int) -> str:
-    """Read last n lines (used for EOD summary)."""
+    """Read last n lines (used as a last-resort fallback)."""
     log_path = Path(config.TradingBotConfig.log_file)
     if not log_path.exists():
         return f"(log file not found at {log_path})"
     with open(log_path, "r", errors="replace") as f:
         lines = f.readlines()
     return "".join(lines[-n:]) or "(log file is empty)"
+
+
+def _read_log_for_date(date_key: str) -> str:
+    """Return all log lines whose timestamp matches `date_key` (YYYY-MM-DD).
+    Falls back to _read_log_lines() with eod_log_lines if no date-matched lines found."""
+    log_path = Path(config.TradingBotConfig.log_file)
+    if not log_path.exists():
+        return f"(log file not found at {log_path})"
+    with open(log_path, "r", errors="replace") as f:
+        all_lines = f.readlines()
+
+    matched = [line for line in all_lines if date_key in line]
+
+    if matched:
+        logger.info("EOD log filter: found %d lines for %s", len(matched), date_key)
+        return "".join(matched)
+
+    # Fallback: no lines with date stamp found — use raw line count
+    logger.warning("EOD log filter: no lines matched %s — falling back to last %d lines",
+                   date_key, config.MonitorConfig.eod_log_lines)
+    return _read_log_lines(config.MonitorConfig.eod_log_lines)
 
 
 def _read_log_since(minutes: int) -> str:
@@ -380,10 +401,9 @@ async def _eod_summary_job(channel: discord.TextChannel) -> None:
                 logger.info("EOD summary skipped — weekend")
                 continue
 
-            n = config.MonitorConfig.eod_log_lines
-            log_content = _read_log_lines(n)
             today_str = _now_ist().strftime("%d %B %Y")
             date_key = _now_ist().strftime("%Y-%m-%d")
+            log_content = _read_log_for_date(date_key)
 
             prompt = _EOD_PROMPT.format(
                 date=today_str, date_key=date_key, log_content=log_content
@@ -411,8 +431,13 @@ async def _eod_summary_job(channel: discord.TextChannel) -> None:
                 discord_body = _format_eod_discord(entry, today_str)
             except (json.JSONDecodeError, Exception) as parse_err:
                 logger.warning("EOD JSON parse failed: %s", parse_err)
-                # Fallback: post raw text, save raw under 'raw' key
-                discord_body = raw
+                # Fallback: alert with error, save raw under 'raw' key so journal isn't empty
+                discord_body = (
+                    f"⚠️ **EOD JSON parse failed** — model did not return valid JSON.\n"
+                    f"Use `!retrigger-eod {date_key}` to retry.\n"
+                    f"Parse error: `{parse_err}`\n\n"
+                    f"Raw model output:\n{raw[:800]}"
+                )
                 save_journal_entry(date_key, {"date": date_key, "raw": raw})
 
             logger.info("EOD summary generated and saved for %s", date_key)

@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from options_monitor import config
-from options_monitor.scheduler import _read_log_lines, _EOD_PROMPT, _gemini_one_shot, _format_eod_discord
+from options_monitor.scheduler import _read_log_for_date, _read_log_lines, _EOD_PROMPT, _gemini_one_shot, _format_eod_discord
 from options_monitor.tools import save_journal_entry
 
 def main():
@@ -26,13 +26,8 @@ def main():
 
     print(f"Generating EOD summary for {today_str} ({date_key})...")
     
-    n = config.MonitorConfig.eod_log_lines
-    log_content = _read_log_lines(n)
-    
-    if date_key not in log_content:
-        print(f"Warning: Did not find '{date_key}' explicitly in the last {n} log lines.")
-        print("Model may hallucinate if the trades for this day rolled out of the buffer.")
-        print("Continuing anyway...")
+    log_content = _read_log_for_date(date_key)
+    print(f"Log lines loaded: {len(log_content.splitlines())} lines for {date_key}")
 
     prompt = _EOD_PROMPT.format(date=today_str, date_key=date_key, log_content=log_content)
     
