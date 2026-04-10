@@ -49,5 +49,5 @@ monitor:
   check_log_lines: 100              # Lines to read per periodic check
   eod_summary_time: "15:35"         # Time to post end-of-day summary (HH:MM IST)
   eod_log_lines: 2000               # Lines to read for EOD summary
-  eod_model: "gemini-3-flash-preview"     # Model for EOD journal (richer schema needs more capability)
+  eod_model: "gemini-3-flash"     # Model for EOD journal (richer schema needs more capability)
   alert_on_ok: true                # If true, post even when everything looks normal
