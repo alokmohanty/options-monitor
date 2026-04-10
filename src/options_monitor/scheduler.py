@@ -414,7 +414,7 @@ async def _eod_summary_job(channel: discord.TextChannel) -> None:
                 None,
                 lambda: _gemini_one_shot(
                     prompt,
-                    max_tokens=4096,
+                    max_tokens=8192,
                     model=config.MonitorConfig.eod_model,
                 ),
             )

@@ -32,7 +32,7 @@ def main():
     prompt = _EOD_PROMPT.format(date=today_str, date_key=date_key, log_content=log_content)
     
     print(f"Calling EOD model: {config.MonitorConfig.eod_model}")
-    raw = _gemini_one_shot(prompt, max_tokens=4096, model=config.MonitorConfig.eod_model)
+    raw = _gemini_one_shot(prompt, max_tokens=8192, model=config.MonitorConfig.eod_model)
     
     try:
         clean = re.sub(r"^```[\w]*\n?", "", raw.strip(), flags=re.MULTILINE)
