@@ -275,13 +275,16 @@ def _format_eod_discord(entry: dict, today_str: str) -> str:
     notes = mctx.get("notes", "")
 
     # Header section
+    pnl_val = entry.get('total_pnl')
+    pnl_display = f"`{pnl_val}`" if pnl_val is not None else "`0.00` (No Trades)"
+    
     lines = [
         f"{entry.get('overview', '')}\n",
-        f"🗓️ **EOD Trading Summary: {date_str}**",
-        f"Overall Status: {'Technical Issues' if entry.get('issues') else 'Normal Operation'} | Profitable: {'✅' if (entry.get('total_pnl', 0) or 0) > 0 else '❌'}",
+        f"🗓️ **EOD Trading Summary: {today_str}**",
+        f"Overall Status: {'Technical Issues' if entry.get('issues') else 'Normal Operation'} | Profitable: {'✅' if (pnl_val or 0) > 0 else '❌'}",
         "\n---",
         "\n#### 📈 Financial Overview",
-        f"Total PnL: Approx `{entry.get('total_pnl', 0)}`",
+        f"Total PnL: Approx {pnl_display}",
         f"Total Trades: {entry.get('total_trades', 0)}",
         f"Market Trend: {trend.capitalize()} | Volatility: {vol.capitalize()}",
     ]
